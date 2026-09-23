@@ -112,12 +112,6 @@ const OPTION_SEMANTIC: Record<string, Semantic> = {
   blocker: "bad",
 };
 
-const SELECTED_CLS: Record<Semantic, string> = {
-  good: "bg-emerald-200 text-emerald-900",
-  medium: "bg-amber-200 text-amber-900",
-  bad: "bg-rose-200 text-rose-900",
-  neutral: "bg-sky-200 text-sky-900",
-};
 
 const SEVERITY_TEXT_CLS: Record<string, string> = {
   good: "text-emerald-700",
@@ -130,43 +124,53 @@ function humanise(key: string): string {
   return OPTION_LABELS[key] ?? key.replaceAll("_", " ");
 }
 
-function SegmentedScale({
+const DOT_FILL: Record<Semantic, string> = {
+  good: "bg-emerald-500",
+  medium: "bg-amber-400",
+  bad: "bg-rose-500",
+  neutral: "bg-sky-500",
+};
+
+function DotStrip({
+  code,
   label,
   options,
   selected,
   confidence,
 }: {
+  code: string;
   label: string;
   options: readonly string[];
   selected: string;
   confidence?: number;
 }) {
+  const conf = confidence === undefined ? "--" : `${Math.round(confidence * 100)}%`;
   return (
-    <div className="grid grid-cols-[110px_1fr_44px] items-center gap-2">
-      <span className="text-xs text-slate-600">{label}</span>
-      <div className="flex">
-        {options.map((opt, i) => {
-          const isSel = opt === selected;
-          const semantic: Semantic = OPTION_SEMANTIC[opt] ?? "neutral";
-          return (
-            <span
-              key={opt}
-              className={`flex-1 border border-slate-200 px-1 py-0.5 text-center text-[10px] truncate ${
-                i === 0 ? "rounded-l" : ""
-              } ${i === options.length - 1 ? "rounded-r" : ""} ${
-                isSel ? `font-semibold ${SELECTED_CLS[semantic]}` : "bg-white text-slate-400"
-              }`}
-              title={humanise(opt)}
-            >
-              {isSel ? "\u2713 " : ""}
-              {humanise(opt)}
-            </span>
-          );
-        })}
-      </div>
-      <span className="text-[10px] text-slate-500 text-right">
-        {confidence === undefined ? "\u2014" : `${Math.round(confidence * 100)}%`}
+    <div
+      className="group relative flex items-center gap-1"
+      title={`${label}: ${humanise(selected)} (${conf}) - options: ${options.map(humanise).join(" \u00b7 ")}`}
+    >
+      <span className="text-[10px] uppercase text-slate-400">{code}</span>
+      <span className="flex items-center gap-[2px]">
+        {options.map((opt) => (
+          <span
+            key={opt}
+            className={`h-[7px] w-[7px] rounded-full ${
+              opt === selected ? DOT_FILL[OPTION_SEMANTIC[opt] ?? "neutral"] : "bg-slate-200"
+            }`}
+          />
+        ))}
       </span>
+      <div className="dot-popover absolute left-0 top-full mt-1 bg-slate-900 text-white text-[11px] rounded px-2 py-1 shadow-lg z-20 whitespace-nowrap">
+        <div className="font-semibold mb-0.5">{label}</div>
+        {options.map((opt) => (
+          <div key={opt} className={opt === selected ? "font-bold" : "text-slate-300"}>
+            {opt === selected ? "\u2713 " : ""}
+            {humanise(opt)}
+            {opt === selected ? ` \u00b7 ${conf}` : ""}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -617,158 +621,165 @@ export default function Home() {
               )}
               {evalResp && (
                 <>
-                  <p className="text-xs text-slate-500 mb-2">
-                    Evaluated {evalResp.evaluatedCount} of {evalResp.corpusSize} resumes in{" "}
-                    {evalResp.durationMs} ms · mode: {evalResp.mode} · concurrency{" "}
-                    {evalResp.concurrency}
-                    {evalResp.fallbackReason ? ` (fallback: ${evalResp.fallbackReason})` : ""}
-                  </p>
+                  <div className="flex justify-between items-baseline mb-2">
+                    <p className="text-xs text-slate-500">
+                      Evaluated {evalResp.evaluatedCount} of {evalResp.corpusSize} resumes in{" "}
+                      {evalResp.durationMs} ms · mode: {evalResp.mode} · concurrency{" "}
+                      {evalResp.concurrency}
+                      {evalResp.fallbackReason ? ` (fallback: ${evalResp.fallbackReason})` : ""}
+                    </p>
+                    <p className="text-[10px] text-slate-400">
+                      DI discipline · SE seniority · DO domain · RE recommendation · KW keyword gap
+                      · BL hard blocker - hover a strip for details
+                    </p>
+                  </div>
                   <div className="space-y-2">
-                    {evalResp.results.map((r, i) => {
-                      const shown = r.missingKeywords.slice(0, 12);
-                      const extra = r.missingKeywords.length - shown.length;
-                      return (
-                        <div
-                          key={r.candidate.id}
-                          className={`rounded-lg border p-3 bg-white shadow-sm ${
-                            r.scorecard.hard_requirement_blocker
-                              ? "border-rose-300"
-                              : "border-slate-200"
-                          }`}
-                        >
-                          <div className="flex items-center gap-4 flex-wrap">
-                            <span className="text-slate-500 text-sm w-6">#{i + 1}</span>
-                            <div className="w-40">
-                              <div className="text-2xl font-bold">
-                                {r.scorecard.fit_confidence}
-                                <span className="text-xs font-normal text-slate-500">/100</span>
-                              </div>
-                              <div className="h-1.5 rounded bg-slate-200 mt-1">
-                                <div
-                                  className={`h-1.5 rounded ${
-                                    r.scorecard.fit_confidence >= 70
-                                      ? "bg-emerald-500"
-                                      : r.scorecard.fit_confidence >= 45
-                                        ? "bg-amber-500"
-                                        : "bg-red-500"
-                                  }`}
-                                  style={{ width: `${r.scorecard.fit_confidence}%` }}
-                                />
-                              </div>
-                            </div>
-                            <div className="flex-1 min-w-48">
-                              <div className="text-sm font-medium truncate">{r.candidate.name}</div>
-                              <div className="text-xs text-slate-500">{r.candidate.folder}</div>
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => doReuse(r.candidate.id)}
-                                className="rounded bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-xs font-medium"
-                              >
-                                Reuse As-Is
-                              </button>
-                              <button
-                                onClick={() => openKeywordPass(r)}
-                                className="rounded bg-white hover:bg-slate-50 px-2.5 py-1 text-xs border border-slate-300 text-slate-700"
-                              >
-                                Keyword Pass
-                              </button>
-                              <button
-                                onClick={doEscalate}
-                                className="rounded bg-white hover:bg-amber-50 px-2.5 py-1 text-xs border border-amber-300 text-amber-700"
-                              >
-                                Escalate
-                              </button>
-                            </div>
+                    {evalResp.results.map((r, i) => (
+                      <div
+                        key={r.candidate.id}
+                        className={`rounded-lg border bg-white shadow-sm ${
+                          r.scorecard.hard_requirement_blocker
+                            ? "border-rose-300"
+                            : "border-slate-200"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 py-2 px-3">
+                          <span className="text-slate-400 text-xs w-6">#{i + 1}</span>
+                          <div className="w-14 shrink-0">
+                            <span className="text-xl font-bold">
+                              {r.scorecard.fit_confidence}
+                            </span>
+                            <span className="text-[10px] font-normal text-slate-500">/100</span>
                           </div>
-                          <div className="mt-2 bg-slate-50 rounded-md p-2 border border-slate-200">
-                            <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
-                              Jev scorecard
-                            </div>
-                            <div className="space-y-1">
-                              <SegmentedScale
-                                label="Discipline"
-                                options={DISCIPLINE_ALIGNMENT}
-                                selected={r.scorecard.discipline_alignment}
-                                confidence={r.scorecard.confidences?.discipline_alignment}
-                              />
-                              <SegmentedScale
-                                label="Seniority"
-                                options={SENIORITY_DELTA}
-                                selected={r.scorecard.seniority_delta}
-                                confidence={r.scorecard.confidences?.seniority_delta}
-                              />
-                              <SegmentedScale
-                                label="Domain"
-                                options={DOMAIN_OVERLAP}
-                                selected={r.scorecard.domain_overlap}
-                                confidence={r.scorecard.confidences?.domain_overlap}
-                              />
-                              <SegmentedScale
-                                label="Recommendation"
-                                options={REUSE_RECOMMENDATION}
-                                selected={r.scorecard.reuse_recommendation}
-                                confidence={r.scorecard.confidences?.reuse_recommendation}
-                              />
-                              <SegmentedScale
-                                label="Keyword gap"
-                                options={KEYWORD_SEVERITY}
-                                selected={r.scorecard.keyword_severity}
-                                confidence={r.scorecard.confidences?.keyword_severity}
-                              />
-                              <SegmentedScale
-                                label="Hard blocker"
-                                options={["none", "blocker"]}
-                                selected={
-                                  r.scorecard.hard_requirement_blocker ? "blocker" : "none"
-                                }
-                                confidence={r.scorecard.confidences?.hard_requirement_blocker}
-                              />
-                            </div>
-                            <p className="mt-1 text-[10px] text-slate-500">
-                              {"Scales show every option Jev could pick; \u2713 = Jev's answer, % = Jev's confidence in that answer."}
-                            </p>
+                          <div className="flex-1 min-w-0 text-sm truncate">
+                            {r.scorecard.hard_requirement_blocker && (
+                              <span className="text-[9px] uppercase font-bold text-rose-700 mr-1">
+                                Blocker
+                              </span>
+                            )}
+                            <span className="font-medium">{r.candidate.name}</span>
+                            <span className="text-[11px] text-slate-500">
+                              {" "}· {r.candidate.folder}
+                            </span>
                           </div>
-                          {r.missingKeywords.length > 0 && (
-                            <div className="mt-2">
-                              <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
-                                Missing keywords ({r.missingKeywords.length})
-                              </div>
-                              <div className="flex gap-1 flex-wrap items-center">
-                                {(expandedKws.has(r.candidate.id)
-                                  ? r.missingKeywords
-                                  : shown
-                                ).map((k) => (
-                                  <span
-                                    key={k}
-                                    className="rounded-sm border border-dashed border-slate-300 bg-white text-slate-600 text-[11px] px-1.5"
-                                  >
-                                    {k}
-                                  </span>
-                                ))}
-                                {extra > 0 && (
-                                  <button
-                                    onClick={() =>
-                                      setExpandedKws((prev) => {
-                                        const next = new Set(prev);
-                                        if (next.has(r.candidate.id)) next.delete(r.candidate.id);
-                                        else next.add(r.candidate.id);
-                                        return next;
-                                      })
-                                    }
-                                    className="text-[11px] text-indigo-600 underline"
-                                  >
-                                    {expandedKws.has(r.candidate.id)
-                                      ? "show less"
-                                      : `+${extra} more`}
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          )}
+                          <div className="shrink-0 flex items-center gap-3">
+                            <DotStrip
+                              code="DI"
+                              label="Discipline"
+                              options={DISCIPLINE_ALIGNMENT}
+                              selected={r.scorecard.discipline_alignment}
+                              confidence={r.scorecard.confidences?.discipline_alignment}
+                            />
+                            <DotStrip
+                              code="SE"
+                              label="Seniority"
+                              options={SENIORITY_DELTA}
+                              selected={r.scorecard.seniority_delta}
+                              confidence={r.scorecard.confidences?.seniority_delta}
+                            />
+                            <DotStrip
+                              code="DO"
+                              label="Domain"
+                              options={DOMAIN_OVERLAP}
+                              selected={r.scorecard.domain_overlap}
+                              confidence={r.scorecard.confidences?.domain_overlap}
+                            />
+                            <DotStrip
+                              code="RE"
+                              label="Recommendation"
+                              options={REUSE_RECOMMENDATION}
+                              selected={r.scorecard.reuse_recommendation}
+                              confidence={r.scorecard.confidences?.reuse_recommendation}
+                            />
+                            <DotStrip
+                              code="KW"
+                              label="Keyword gap"
+                              options={KEYWORD_SEVERITY}
+                              selected={r.scorecard.keyword_severity}
+                              confidence={r.scorecard.confidences?.keyword_severity}
+                            />
+                            <DotStrip
+                              code="BL"
+                              label="Hard blocker"
+                              options={["none", "blocker"]}
+                              selected={
+                                r.scorecard.hard_requirement_blocker ? "blocker" : "none"
+                              }
+                              confidence={r.scorecard.confidences?.hard_requirement_blocker}
+                            />
+                          </div>
+                          <div className="shrink-0 flex items-center gap-1">
+                            <span
+                              className={`h-[7px] w-[7px] rounded-full ${
+                                DOT_FILL[OPTION_SEMANTIC[r.scorecard.keyword_severity] ?? "neutral"]
+                              }`}
+                            />
+                            <button
+                              disabled={r.missingKeywords.length === 0}
+                              onClick={() =>
+                                setExpandedKws((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(r.candidate.id)) next.delete(r.candidate.id);
+                                  else next.add(r.candidate.id);
+                                  return next;
+                                })
+                              }
+                              className={
+                                r.missingKeywords.length === 0
+                                  ? "text-[11px] text-slate-400 whitespace-nowrap"
+                                  : "text-[11px] text-indigo-600 hover:underline whitespace-nowrap"
+                              }
+                            >
+                              {r.missingKeywords.length === 0
+                                ? "no gaps"
+                                : `${r.missingKeywords.length} missing`}
+                            </button>
+                          </div>
+                          <div className="shrink-0 flex gap-1.5">
+                            <button
+                              onClick={() => doReuse(r.candidate.id)}
+                              className="rounded bg-emerald-600 hover:bg-emerald-700 text-white px-2 py-0.5 text-[11px] font-medium"
+                            >
+                              Reuse As-Is
+                            </button>
+                            <button
+                              onClick={() => openKeywordPass(r)}
+                              className="rounded bg-white hover:bg-slate-50 px-2 py-0.5 text-[11px] border border-slate-300 text-slate-700"
+                            >
+                              Keyword Pass
+                            </button>
+                            <button
+                              onClick={doEscalate}
+                              className="rounded bg-white hover:bg-amber-50 px-2 py-0.5 text-[11px] border border-amber-300 text-amber-700"
+                            >
+                              Escalate
+                            </button>
+                          </div>
                         </div>
-                      );
-                    })}
+                        {expandedKws.has(r.candidate.id) && r.missingKeywords.length > 0 && (
+                          <div className="border-t border-slate-100 mt-0 px-3 pb-2 pt-2">
+                            <span
+                              className={`text-[11px] mr-2 ${
+                                SEVERITY_TEXT_CLS[
+                                  OPTION_SEMANTIC[r.scorecard.keyword_severity] ?? "neutral"
+                                ]
+                              }`}
+                            >
+                              Missing keywords · Jev severity:{" "}
+                              {humanise(r.scorecard.keyword_severity)}
+                            </span>
+                            {r.missingKeywords.map((k) => (
+                              <span
+                                key={k}
+                                className="rounded-sm border border-dashed border-slate-300 bg-white text-slate-600 text-[11px] px-1.5 mr-1"
+                              >
+                                {k}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </>
               )}
