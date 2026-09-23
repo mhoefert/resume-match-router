@@ -44,11 +44,19 @@ const LEXICON: string[] = [
 ];
 
 const STOPWORDS = new Set(
-  `the and for with you your our their this that will are have has been not but who what when where how why all any each more most other some such only own same than too very can just about into over after should would could may might must shall job description requirements role work team company join us
+  `the and for with you your our their this that will are have has been not but who what when where how why all any each more most other some such only own same than too very can just about into over after should would could may might must shall job description requirements role work team company join us he she they it his her its i we these those
    January February March April May June July August September October November December
    Monday Tuesday Wednesday Thursday Friday Saturday Sunday
    Singapore Sydney Melbourne Australia London Vancouver Toronto Canada Hong Kong India Japan
    AI PM CEO CTO COO VP HR IT JD FAQ EOE`.toLowerCase().split(/\s+/)
+);
+
+/** Words that invalidate a capitalised-phrase candidate when on either edge. */
+const EDGE_WORDS = new Set(
+  `you we these this our the a an your job description requirements he she they it his her their its i those that and or of in on at to from by with as is are was were be been
+   design manage own build identify determine prototype work use create lead drive develop support ensure`.split(
+    /\s+/
+  )
 );
 
 function escapeRe(s: string): string {
@@ -62,46 +70,88 @@ function hasWord(haystack: string, needle: string): boolean {
   return variants.some((v) => new RegExp(`\\b${escapeRe(v)}\\b`).test(lower));
 }
 
-export function extractKeywords(jdText: string): string[] {
+export interface ExtractOptions {
+  /** JD title — excluded (with each of its words) from heuristic terms. */
+  title?: string;
+  /** Hiring company — excluded (with each of its words) from heuristic terms. */
+  company?: string;
+}
+
+export function extractKeywords(jdText: string, opts?: ExtractOptions): string[] {
   const counts = new Map<string, { count: number; first: number }>();
+  const displayMap = new Map<string, string>();
   const lower = jdText.toLowerCase();
 
-  const record = (term: string, display: string, pos: number) => {
-    const key = display.toLowerCase();
+  const record = (key: string, display: string, pos: number) => {
     const existing = counts.get(key);
     if (existing) {
       existing.count += 1;
       existing.first = Math.min(existing.first, pos);
     } else {
       counts.set(key, { count: 1, first: pos });
-      // store display under a parallel map
       displayMap.set(key, display);
     }
   };
 
-  const displayMap = new Map<string, string>();
-
-  // (a) lexicon
+  // (a) lexicon — matched over the full JD text
   for (const term of LEXICON) {
     const re = new RegExp(`\\b${escapeRe(term.toLowerCase())}\\b`, "g");
     let m: RegExpExecArray | null;
     while ((m = re.exec(lower))) record(term.toLowerCase(), term, m.index);
   }
 
-  // (b) heuristics: ALL-CAPS acronyms (2-6) and capitalised multi-word proper nouns
+  // (b) heuristics: ALL-CAPS acronyms (2-6) and capitalised multi-word proper nouns.
+  // Heading lines are excluded and the text is split into sentence/line segments
+  // first so phrases never span punctuation or line boundaries.
+  const titleCompany = new Set<string>();
+  for (const src of [opts?.title, opts?.company]) {
+    if (!src) continue;
+    const s = src.toLowerCase().trim();
+    if (s) {
+      titleCompany.add(s);
+      s.split(/\s+/).forEach((w) => titleCompany.add(w));
+    }
+  }
+
+  const noHeadings = jdText
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+
   const acronymRe = /\b[A-Z][A-Z0-9&-]{1,5}\b/g;
   let m: RegExpExecArray | null;
-  while ((m = acronymRe.exec(jdText))) {
+  while ((m = acronymRe.exec(noHeadings))) {
     const w = m[0];
-    if (!STOPWORDS.has(w.toLowerCase()) && !/^\d+$/.test(w)) {
-      // prefer JD casing; if the lexicon already recorded it (rare) skip dupes
+    if (
+      !STOPWORDS.has(w.toLowerCase()) &&
+      !titleCompany.has(w.toLowerCase()) &&
+      !/^\d+$/.test(w) &&
+      !w.endsWith("-")
+    ) {
       record(w.toLowerCase(), w, m.index);
     }
   }
+
   const properRe = /\b([A-Z][A-Za-z0-9.+#&-]*(?:\s+[A-Z][A-Za-z0-9.+#&-]*){1,3})\b/g;
-  while ((m = properRe.exec(jdText))) {
-    const phrase = m[1].trim();
-    if (phrase.length <= 40 && !phrase.toLowerCase().split(/\s+/).every((w) => STOPWORDS.has(w))) {
+  for (const seg of noHeadings.split(/[.!?:;\r\n|•]/)) {
+    properRe.lastIndex = 0;
+    while ((m = properRe.exec(seg))) {
+      const phrase = m[1].trim();
+      const words = phrase.split(/\s+/);
+      if (
+        phrase.length < 3 ||
+        phrase.length > 40 ||
+        phrase.endsWith("-") ||
+        /[.!?:;]/.test(phrase) ||
+        EDGE_WORDS.has(words[0].toLowerCase()) ||
+        EDGE_WORDS.has(words[words.length - 1].toLowerCase()) ||
+        STOPWORDS.has(words[0].toLowerCase()) ||
+        STOPWORDS.has(words[words.length - 1].toLowerCase()) ||
+        titleCompany.has(phrase.toLowerCase()) ||
+        words.every((w) => STOPWORDS.has(w.toLowerCase()))
+      ) {
+        continue;
+      }
       record(phrase.toLowerCase(), phrase, m.index);
     }
   }

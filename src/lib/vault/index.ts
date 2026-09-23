@@ -27,7 +27,11 @@ export function vaultExists(): boolean {
 export function parseFrontmatter(filePath: string): { data: Record<string, unknown>; content: string } {
   const raw = fs.readFileSync(filePath, "utf8");
   const parsed = matter(raw);
-  return { data: parsed.data as Record<string, unknown>, content: parsed.content };
+  const data: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(parsed.data as Record<string, unknown>)) {
+    data[k] = v instanceof Date ? v.toISOString().slice(0, 10) : v;
+  }
+  return { data, content: parsed.content };
 }
 
 export function serializeFrontmatter(data: Record<string, unknown>, content: string): string {

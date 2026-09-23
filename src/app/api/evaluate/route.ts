@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     if (!jd) return Response.json({ error: `JD not found: ${body.jdId}` }, { status: 404 });
 
     const corpus = loadCorpus({ includeAll: body.includeAll });
-    const keywords = extractKeywords(jd.body);
+    const keywords = extractKeywords(jd.body, { title: jd.title, company: jd.company });
 
     const shortlistEnv = (process.env.JEV_SHORTLIST || "30").trim().toLowerCase();
     const shortlist = shortlistEnv === "all" ? corpus.length : Math.max(1, parseInt(shortlistEnv, 10) || 30);
@@ -23,6 +23,9 @@ export async function POST(req: Request) {
       .map((c) => ({ c, prerank: prerankScore(keywords, c.text) }))
       .sort((a, b) => b.prerank - a.prerank)
       .slice(0, shortlist);
+
+    const prerankMin = scored.length ? scored[scored.length - 1].prerank : 0;
+    const prerankMax = scored.length ? scored[0].prerank : 0;
 
     const evaluator = getEvaluator();
     const concurrency = Math.max(1, parseInt(process.env.JEV_CONCURRENCY || "16", 10) || 16);
@@ -38,7 +41,11 @@ export async function POST(req: Request) {
             candidate_resume: { name: c.name, text: c.text },
             missing_keywords: missingKeywords,
           };
-          const scorecard = await evaluator.evaluate(jd.id, c.id, state);
+          const scorecard = await evaluator.evaluate(jd.id, c.id, state, {
+            prerank,
+            prerankMin,
+            prerankMax,
+          });
           return { candidate: c, scorecard, missingKeywords, prerankScore: prerank };
         })
       )

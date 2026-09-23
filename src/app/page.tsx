@@ -166,6 +166,26 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const runEvaluate = useCallback(
+    async (jdId: string, all: boolean) => {
+      setEvaluating(true);
+      setEvalResp(null);
+      try {
+        const resp = await api<EvaluateResponse>("/api/evaluate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jdId, includeAll: all }),
+        });
+        setEvalResp(resp);
+      } catch (e) {
+        toast("error", `Evaluate failed: ${String(e)}`);
+      } finally {
+        setEvaluating(false);
+      }
+    },
+    [toast]
+  );
+
   const selectJd = async (id: string) => {
     setSelectedId(id);
     setEvalResp(null);
@@ -175,6 +195,7 @@ export default function Home() {
       setJd(jd);
       setCompany(jd.company);
       setRole(jd.role);
+      runEvaluate(jd.id, includeAll);
     } catch (e) {
       toast("error", String(e));
     }
@@ -182,20 +203,7 @@ export default function Home() {
 
   const evaluate = async () => {
     if (!jd) return;
-    setEvaluating(true);
-    setEvalResp(null);
-    try {
-      const resp = await api<EvaluateResponse>("/api/evaluate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jdId: jd.id, includeAll }),
-      });
-      setEvalResp(resp);
-    } catch (e) {
-      toast("error", `Evaluate failed: ${String(e)}`);
-    } finally {
-      setEvaluating(false);
-    }
+    runEvaluate(jd.id, includeAll);
   };
 
   const afterAction = async (jdMoved: boolean) => {
@@ -302,19 +310,28 @@ export default function Home() {
   };
 
   const statusPill = !status
-    ? { text: "Loading...", cls: "bg-slate-700 text-slate-200" }
+    ? { text: "Loading...", cls: "bg-slate-700 text-slate-200", title: "Loading status" }
     : !status.vaultExists
-      ? { text: "Vault missing", cls: "bg-red-900 text-red-200" }
+      ? { text: "Vault missing", cls: "bg-red-900 text-red-200", title: "VAULT_PATH does not exist" }
       : status.mode === "jev"
-        ? { text: "Jev live", cls: "bg-emerald-900 text-emerald-200" }
-        : { text: "Mock mode", cls: "bg-amber-900 text-amber-200" };
+        ? { text: "Jev live", cls: "bg-emerald-900 text-emerald-200", title: "Jev live: jev-latest" }
+        : evalResp?.fallbackReason
+          ? {
+              text: "Mock mode",
+              cls: "bg-amber-900 text-amber-200",
+              title: `fell back to mock: ${evalResp.fallbackReason}`,
+            }
+          : { text: "Mock mode", cls: "bg-amber-900 text-amber-200", title: "TYPESAFE_API_KEY not set" };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       {/* Header */}
       <header className="border-b border-slate-800 px-4 py-3 flex items-center gap-4 flex-wrap">
         <h1 className="text-lg font-semibold">Resume Match Router</h1>
-        <span className={`rounded px-2 py-0.5 text-xs font-medium ${statusPill.cls}`}>
+        <span
+          title={statusPill.title}
+          className={`rounded px-2 py-0.5 text-xs font-medium ${statusPill.cls}`}
+        >
           {statusPill.text}
         </span>
         {status && (
@@ -435,13 +452,16 @@ export default function Home() {
                     disabled={evaluating}
                     className="rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-50 px-4 py-1.5 text-sm font-medium"
                   >
-                    {evaluating ? "Evaluating..." : "Evaluate matches"}
+                    {evaluating ? "Evaluating..." : "Re-evaluate"}
                   </button>
                   <label className="text-xs text-slate-400 flex items-center gap-1.5">
                     <input
                       type="checkbox"
                       checked={includeAll}
-                      onChange={(e) => setIncludeAll(e.target.checked)}
+                      onChange={(e) => {
+                        setIncludeAll(e.target.checked);
+                        if (jd) runEvaluate(jd.id, e.target.checked);
+                      }}
                     />
                     include all resumes (ignore manifest filter)
                   </label>
@@ -500,15 +520,15 @@ export default function Home() {
                               <div className="text-sm font-medium truncate">{r.candidate.name}</div>
                               <div className="text-xs text-slate-400">{r.candidate.folder}</div>
                               <div className="mt-1 flex gap-1 flex-wrap">
-                                {badge(r.scorecard.discipline_alignment)}
-                                {badge(r.scorecard.seniority_delta)}
-                                {badge(r.scorecard.domain_overlap)}
-                                {badge(r.scorecard.reuse_recommendation)}
                                 {r.scorecard.hard_requirement_blocker && (
                                   <span className="inline-block rounded border border-red-600 bg-red-900/80 px-1.5 py-0.5 text-[10px] font-bold text-red-200 uppercase">
                                     Blocker
                                   </span>
                                 )}
+                                {badge(r.scorecard.discipline_alignment)}
+                                {badge(r.scorecard.seniority_delta)}
+                                {badge(r.scorecard.domain_overlap)}
+                                {badge(r.scorecard.reuse_recommendation)}
                               </div>
                             </div>
                             <div className="flex gap-2">
@@ -565,7 +585,7 @@ export default function Home() {
       {/* Keyword Pass modal */}
       {kpModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-6 z-50">
-          <div className="bg-slate-900 border border-slate-700 rounded-lg w-full max-w-5xl max-h-[90vh] flex flex-col">
+          <div className="bg-slate-900 border border-slate-700 rounded-lg w-[95vw] max-w-6xl h-[88vh] flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-slate-800">
               <h3 className="font-semibold">Keyword Pass - {kpModal.candidateId}</h3>
               <button
@@ -589,6 +609,12 @@ export default function Home() {
                   ))}
                 </div>
                 {badge(kpModal.severity)}
+                <button
+                  onClick={() => navigator.clipboard.writeText(kpModal.missingKeywords.join("\n"))}
+                  className="mt-3 w-full rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 px-2 py-1 text-xs"
+                >
+                  Copy missing keywords
+                </button>
                 <div className="mt-4 space-y-2">
                   <label className="block text-xs text-slate-400">
                     Company
@@ -608,11 +634,17 @@ export default function Home() {
                   </label>
                 </div>
               </div>
-              <textarea
-                value={kpModal.raw}
-                onChange={(e) => setKpModal({ ...kpModal, raw: e.target.value })}
-                className="flex-1 bg-slate-950 text-slate-200 text-xs font-mono p-3 resize-none outline-none"
-              />
+              <div className="flex-1 min-h-0 flex flex-col">
+                <p className="px-3 pt-2 pb-1 text-[11px] text-slate-500">
+                  The Critical Alignment Assessment header and keyword tables are stripped
+                  automatically by export_docx.py.
+                </p>
+                <textarea
+                  value={kpModal.raw}
+                  onChange={(e) => setKpModal({ ...kpModal, raw: e.target.value })}
+                  className="flex-1 min-h-0 bg-slate-950 text-slate-200 text-xs font-mono p-3 resize-none outline-none"
+                />
+              </div>
             </div>
             <div className="flex justify-end gap-2 p-3 border-t border-slate-800">
               <button

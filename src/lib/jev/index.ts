@@ -1,11 +1,16 @@
 import { evaluateCandidate, JevAuthError, type EvaluateOpts } from "./client";
-import { evaluateCandidateMock, mockLatency } from "./mock";
+import { evaluateCandidateMock, mockLatency, type MockContext } from "./mock";
 import type { EvaluationState, Scorecard } from "./contract";
 
 export interface Evaluator {
   mode: "jev" | "mock";
   fallbackReason?: string;
-  evaluate(jdId: string, candidateId: string, state: EvaluationState): Promise<Scorecard>;
+  evaluate(
+    jdId: string,
+    candidateId: string,
+    state: EvaluationState,
+    ctx?: MockContext
+  ): Promise<Scorecard>;
 }
 
 /**
@@ -20,9 +25,9 @@ export function getEvaluator(): Evaluator {
   if (!apiKey) {
     return {
       mode: "mock",
-      evaluate: async (jdId, candidateId, state) => {
+      evaluate: async (jdId, candidateId, state, ctx) => {
         await mockLatency();
-        return evaluateCandidateMock(jdId, candidateId, state);
+        return evaluateCandidateMock(jdId, candidateId, state, ctx);
       },
     };
   }
@@ -39,10 +44,10 @@ export function getEvaluator(): Evaluator {
     get fallbackReason() {
       return fallbackReason;
     },
-    async evaluate(jdId, candidateId, state) {
+    async evaluate(jdId, candidateId, state, ctx) {
       if (fellBack) {
         await mockLatency();
-        return evaluateCandidateMock(jdId, candidateId, state);
+        return evaluateCandidateMock(jdId, candidateId, state, ctx);
       }
       try {
         const result = await evaluateCandidate(state, opts);
@@ -54,7 +59,7 @@ export function getEvaluator(): Evaluator {
           fellBack = true;
           fallbackReason = err.message;
           await mockLatency();
-          return evaluateCandidateMock(jdId, candidateId, state);
+          return evaluateCandidateMock(jdId, candidateId, state, ctx);
         }
         throw err;
       }
