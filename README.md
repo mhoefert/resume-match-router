@@ -56,7 +56,7 @@ the default relative `VAULT_PATH` works out of the box.
 | `VAULT_PATH` | `./reference-vault/career-engine` | career-engine folder; relative resolved against repo root |
 | `TYPESAFE_API_KEY` | _(empty)_ | Jev API key; empty = mock evaluator |
 | `JEV_MODEL` | `jev-latest` | model name sent to System One |
-| `JEV_SHORTLIST` | `30` | top-N after pre-rank; `all` evaluates full corpus |
+| `JEV_SHORTLIST` | `30` | default top-N after pre-rank; `all` evaluates full corpus (overridable per request via the UI Shortlist input) |
 | `JEV_CONCURRENCY` | `16` | max parallel evaluations |
 | `PYTHON_BIN` | `python3` | interpreter for docx export |
 
@@ -75,6 +75,17 @@ the default relative `VAULT_PATH` works out of the box.
 
 All errors are `{error}` JSON with appropriate status codes (400 path escapes,
 404 missing, 409 target exists).
+
+## How many resumes get evaluated
+
+Every evaluation first scores the whole eligible corpus with the deterministic
+keyword pre-rank (`prerankScore`), then sends only the **Shortlist** top-N to
+the evaluator. `JEV_SHORTLIST` sets the default N; the Shortlist number input
+next to Re-evaluate overrides it per run (min 1, max corpus size). The
+**Evaluate all resumes** checkbox both bypasses the `Ingested & Active`
+manifest filter and removes the cap, sending the entire corpus — about 5x the
+calls of the default shortlist. `POST /api/evaluate` also accepts
+`{jdId, includeAll?, shortlist?}` directly (`shortlist: "all"` = full corpus).
 
 ## Note: reuse-as-is vs AGENTS-CAREER ledger
 

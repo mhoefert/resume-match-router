@@ -42,6 +42,8 @@ interface EvaluateResponse {
   durationMs: number;
   corpusSize: number;
   evaluatedCount: number;
+  shortlist: number;
+  concurrency: number;
 }
 interface StatusResponse {
   vaultPath: string;
@@ -116,6 +118,7 @@ export default function Home() {
     role: string;
   } | null>(null);
   const [includeAll, setIncludeAll] = useState(false);
+  const [shortlist, setShortlist] = useState(30);
 
   const toast = useCallback((kind: Toast["kind"], text: string) => {
     const id = Date.now() + Math.random();
@@ -146,7 +149,11 @@ export default function Home() {
     (async () => {
       try {
         const s = await api<StatusResponse>("/api/status");
-        if (!cancelled) setStatus(s);
+        if (!cancelled) {
+          setStatus(s);
+          const env = parseInt(s.shortlist, 10);
+          if (Number.isFinite(env) && env > 0) setShortlist(env);
+        }
       } catch (e) {
         if (!cancelled) toast("error", `Status failed: ${String(e)}`);
       }
@@ -167,14 +174,14 @@ export default function Home() {
   }, []);
 
   const runEvaluate = useCallback(
-    async (jdId: string, all: boolean) => {
+    async (jdId: string, all: boolean, top: number) => {
       setEvaluating(true);
       setEvalResp(null);
       try {
         const resp = await api<EvaluateResponse>("/api/evaluate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jdId, includeAll: all }),
+          body: JSON.stringify({ jdId, includeAll: all, shortlist: top }),
         });
         setEvalResp(resp);
       } catch (e) {
@@ -195,7 +202,7 @@ export default function Home() {
       setJd(jd);
       setCompany(jd.company);
       setRole(jd.role);
-      runEvaluate(jd.id, includeAll);
+      runEvaluate(jd.id, includeAll, shortlist);
     } catch (e) {
       toast("error", String(e));
     }
@@ -203,7 +210,7 @@ export default function Home() {
 
   const evaluate = async () => {
     if (!jd) return;
-    runEvaluate(jd.id, includeAll);
+    runEvaluate(jd.id, includeAll, shortlist);
   };
 
   const afterAction = async (jdMoved: boolean) => {
@@ -454,16 +461,32 @@ export default function Home() {
                   >
                     {evaluating ? "Evaluating..." : "Re-evaluate"}
                   </button>
-                  <label className="text-xs text-slate-500 flex items-center gap-1.5">
+                  <label
+                    title="Sends every resume to Jev; ~5x the calls of the default shortlist"
+                    className="text-xs text-slate-500 flex items-center gap-1.5"
+                  >
                     <input
                       type="checkbox"
                       checked={includeAll}
                       onChange={(e) => {
                         setIncludeAll(e.target.checked);
-                        if (jd) runEvaluate(jd.id, e.target.checked);
+                        if (jd) runEvaluate(jd.id, e.target.checked, shortlist);
                       }}
                     />
-                    include all resumes (ignore manifest filter)
+                    Evaluate all resumes
+                  </label>
+                  <label className="text-xs text-slate-500 flex items-center gap-1.5">
+                    Shortlist
+                    <input
+                      type="number"
+                      min={1}
+                      max={status?.corpusSize ?? 9999}
+                      step={5}
+                      disabled={includeAll}
+                      value={shortlist}
+                      onChange={(e) => setShortlist(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                      className="w-16 rounded bg-white border border-slate-300 px-1.5 py-0.5 text-xs text-slate-900 disabled:opacity-50"
+                    />
                   </label>
                 </div>
               </section>
@@ -480,7 +503,8 @@ export default function Home() {
                 <>
                   <p className="text-xs text-slate-500 mb-2">
                     Evaluated {evalResp.evaluatedCount} of {evalResp.corpusSize} resumes in{" "}
-                    {evalResp.durationMs} ms · mode: {evalResp.mode}
+                    {evalResp.durationMs} ms · mode: {evalResp.mode} · concurrency{" "}
+                    {evalResp.concurrency}
                     {evalResp.fallbackReason ? ` (fallback: ${evalResp.fallbackReason})` : ""}
                   </p>
                   <div className="space-y-2">

@@ -7,7 +7,11 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as { jdId?: string; includeAll?: boolean };
+    const body = (await req.json()) as {
+      jdId?: string;
+      includeAll?: boolean;
+      shortlist?: number | "all";
+    };
     if (!body.jdId) return Response.json({ error: "jdId is required" }, { status: 400 });
 
     const jd = readJd(body.jdId);
@@ -16,8 +20,17 @@ export async function POST(req: Request) {
     const corpus = loadCorpus({ includeAll: body.includeAll });
     const keywords = extractKeywords(jd.body, { title: jd.title, company: jd.company });
 
-    const shortlistEnv = (process.env.JEV_SHORTLIST || "30").trim().toLowerCase();
-    const shortlist = shortlistEnv === "all" ? corpus.length : Math.max(1, parseInt(shortlistEnv, 10) || 30);
+    let shortlist: number;
+    if (body.includeAll) {
+      shortlist = corpus.length;
+    } else if (body.shortlist === "all") {
+      shortlist = corpus.length;
+    } else if (typeof body.shortlist === "number" && Number.isFinite(body.shortlist)) {
+      shortlist = Math.min(Math.max(1, Math.floor(body.shortlist)), corpus.length);
+    } else {
+      const shortlistEnv = (process.env.JEV_SHORTLIST || "30").trim().toLowerCase();
+      shortlist = shortlistEnv === "all" ? corpus.length : Math.max(1, parseInt(shortlistEnv, 10) || 30);
+    }
 
     const scored = corpus
       .map((c) => ({ c, prerank: prerankScore(keywords, c.text) }))
@@ -61,6 +74,8 @@ export async function POST(req: Request) {
       durationMs,
       corpusSize: corpus.length,
       evaluatedCount: results.length,
+      shortlist,
+      concurrency,
     };
     if (evaluator.fallbackReason) response.fallbackReason = evaluator.fallbackReason;
     return Response.json(response);

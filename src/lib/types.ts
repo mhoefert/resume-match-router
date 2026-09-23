@@ -42,4 +42,7 @@ export interface EvaluateResponse {
   durationMs: number;
   corpusSize: number;
   evaluatedCount: number;
+  /** Effective number of candidates sent to the evaluator. */
+  shortlist: number;
+  concurrency: number;
 }
