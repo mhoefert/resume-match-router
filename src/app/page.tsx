@@ -1,6 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import {
+  DISCIPLINE_ALIGNMENT,
+  DOMAIN_OVERLAP,
+  KEYWORD_SEVERITY,
+  REUSE_RECOMMENDATION,
+  SENIORITY_DELTA,
+} from "@/lib/jev/contract";
 
 /* ---------- shared types (mirror of src/lib/types.ts, client-safe) ---------- */
 
@@ -26,6 +33,7 @@ interface Scorecard {
   reuse_recommendation: string;
   fit_confidence: number;
   keyword_severity: string;
+  confidences: Partial<Record<string, number>>;
   source: string;
 }
 interface MatchResult {
@@ -55,6 +63,113 @@ interface StatusResponse {
 }
 
 type Toast = { id: number; kind: "success" | "error"; text: string };
+
+type Semantic = "good" | "medium" | "bad" | "neutral";
+
+const OPTION_LABELS: Record<string, string> = {
+  exact_match: "Exact match",
+  adjacent_transferable: "Adjacent / transferable",
+  unrelated_mismatch: "Unrelated",
+  junior_to_jd: "Junior to JD",
+  at_level: "At level",
+  stretch_senior: "Stretch senior",
+  overqualified: "Overqualified",
+  direct_industry: "Direct industry",
+  adjacent_regulated: "Adjacent regulated",
+  generalist_only: "Generalist only",
+  distant_sector: "Distant sector",
+  reuse_as_is: "Reuse as-is",
+  light_keyword_pass: "Light keyword pass",
+  escalate_full_compile: "Escalate full compile",
+  reject_unfit: "Reject unfit",
+  cosmetic_synonym_gap: "Cosmetic / synonym",
+  moderate_gap: "Moderate gap",
+  critical_disqualifier: "Critical",
+  none: "None",
+  blocker: "Blocker",
+};
+
+const OPTION_SEMANTIC: Record<string, Semantic> = {
+  exact_match: "good",
+  adjacent_transferable: "medium",
+  unrelated_mismatch: "bad",
+  junior_to_jd: "bad",
+  at_level: "good",
+  stretch_senior: "medium",
+  overqualified: "medium",
+  direct_industry: "good",
+  adjacent_regulated: "medium",
+  generalist_only: "medium",
+  distant_sector: "bad",
+  reuse_as_is: "good",
+  light_keyword_pass: "neutral",
+  escalate_full_compile: "medium",
+  reject_unfit: "bad",
+  cosmetic_synonym_gap: "good",
+  moderate_gap: "medium",
+  critical_disqualifier: "bad",
+  none: "good",
+  blocker: "bad",
+};
+
+const SELECTED_CLS: Record<Semantic, string> = {
+  good: "bg-emerald-200 text-emerald-900",
+  medium: "bg-amber-200 text-amber-900",
+  bad: "bg-rose-200 text-rose-900",
+  neutral: "bg-sky-200 text-sky-900",
+};
+
+const SEVERITY_TEXT_CLS: Record<string, string> = {
+  good: "text-emerald-700",
+  medium: "text-amber-700",
+  bad: "text-rose-700",
+  neutral: "text-sky-700",
+};
+
+function humanise(key: string): string {
+  return OPTION_LABELS[key] ?? key.replaceAll("_", " ");
+}
+
+function SegmentedScale({
+  label,
+  options,
+  selected,
+  confidence,
+}: {
+  label: string;
+  options: readonly string[];
+  selected: string;
+  confidence?: number;
+}) {
+  return (
+    <div className="grid grid-cols-[110px_1fr_44px] items-center gap-2">
+      <span className="text-xs text-slate-600">{label}</span>
+      <div className="flex">
+        {options.map((opt, i) => {
+          const isSel = opt === selected;
+          const semantic: Semantic = OPTION_SEMANTIC[opt] ?? "neutral";
+          return (
+            <span
+              key={opt}
+              className={`flex-1 border border-slate-200 px-1 py-0.5 text-center text-[10px] truncate ${
+                i === 0 ? "rounded-l" : ""
+              } ${i === options.length - 1 ? "rounded-r" : ""} ${
+                isSel ? `font-semibold ${SELECTED_CLS[semantic]}` : "bg-white text-slate-400"
+              }`}
+              title={humanise(opt)}
+            >
+              {isSel ? "\u2713 " : ""}
+              {humanise(opt)}
+            </span>
+          );
+        })}
+      </div>
+      <span className="text-[10px] text-slate-500 text-right">
+        {confidence === undefined ? "\u2014" : `${Math.round(confidence * 100)}%`}
+      </span>
+    </div>
+  );
+}
 
 const FAV_COLOURS: Record<string, string> = {
   exact_match: "bg-emerald-100 text-emerald-800 border-emerald-200",
@@ -119,6 +234,7 @@ export default function Home() {
   } | null>(null);
   const [includeAll, setIncludeAll] = useState(false);
   const [shortlist, setShortlist] = useState(30);
+  const [expandedKws, setExpandedKws] = useState<Set<string>>(new Set());
 
   const toast = useCallback((kind: Toast["kind"], text: string) => {
     const id = Date.now() + Math.random();
@@ -543,17 +659,6 @@ export default function Home() {
                             <div className="flex-1 min-w-48">
                               <div className="text-sm font-medium truncate">{r.candidate.name}</div>
                               <div className="text-xs text-slate-500">{r.candidate.folder}</div>
-                              <div className="mt-1 flex gap-1 flex-wrap">
-                                {r.scorecard.hard_requirement_blocker && (
-                                  <span className="inline-block rounded border border-rose-300 bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-800 uppercase">
-                                    Blocker
-                                  </span>
-                                )}
-                                {badge(r.scorecard.discipline_alignment)}
-                                {badge(r.scorecard.seniority_delta)}
-                                {badge(r.scorecard.domain_overlap)}
-                                {badge(r.scorecard.reuse_recommendation)}
-                              </div>
                             </div>
                             <div className="flex gap-2">
                               <button
@@ -576,23 +681,89 @@ export default function Home() {
                               </button>
                             </div>
                           </div>
+                          <div className="mt-2 bg-slate-50 rounded-md p-2 border border-slate-200">
+                            <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
+                              Jev scorecard
+                            </div>
+                            <div className="space-y-1">
+                              <SegmentedScale
+                                label="Discipline"
+                                options={DISCIPLINE_ALIGNMENT}
+                                selected={r.scorecard.discipline_alignment}
+                                confidence={r.scorecard.confidences?.discipline_alignment}
+                              />
+                              <SegmentedScale
+                                label="Seniority"
+                                options={SENIORITY_DELTA}
+                                selected={r.scorecard.seniority_delta}
+                                confidence={r.scorecard.confidences?.seniority_delta}
+                              />
+                              <SegmentedScale
+                                label="Domain"
+                                options={DOMAIN_OVERLAP}
+                                selected={r.scorecard.domain_overlap}
+                                confidence={r.scorecard.confidences?.domain_overlap}
+                              />
+                              <SegmentedScale
+                                label="Recommendation"
+                                options={REUSE_RECOMMENDATION}
+                                selected={r.scorecard.reuse_recommendation}
+                                confidence={r.scorecard.confidences?.reuse_recommendation}
+                              />
+                              <SegmentedScale
+                                label="Keyword gap"
+                                options={KEYWORD_SEVERITY}
+                                selected={r.scorecard.keyword_severity}
+                                confidence={r.scorecard.confidences?.keyword_severity}
+                              />
+                              <SegmentedScale
+                                label="Hard blocker"
+                                options={["none", "blocker"]}
+                                selected={
+                                  r.scorecard.hard_requirement_blocker ? "blocker" : "none"
+                                }
+                                confidence={r.scorecard.confidences?.hard_requirement_blocker}
+                              />
+                            </div>
+                            <p className="mt-1 text-[10px] text-slate-500">
+                              {"Scales show every option Jev could pick; \u2713 = Jev's answer, % = Jev's confidence in that answer."}
+                            </p>
+                          </div>
                           {r.missingKeywords.length > 0 && (
-                            <div className="mt-2 flex gap-1 flex-wrap items-center">
-                              <span className="text-[10px] text-slate-500 uppercase mr-1">
-                                missing
-                              </span>
-                              {shown.map((k) => (
-                                <span
-                                  key={k}
-                                  className="rounded bg-slate-100 border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-700"
-                                >
-                                  {k}
-                                </span>
-                              ))}
-                              {extra > 0 && (
-                                <span className="text-[10px] text-slate-500">+{extra} more</span>
-                              )}
-                              {badge(r.scorecard.keyword_severity)}
+                            <div className="mt-2">
+                              <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
+                                Missing keywords ({r.missingKeywords.length})
+                              </div>
+                              <div className="flex gap-1 flex-wrap items-center">
+                                {(expandedKws.has(r.candidate.id)
+                                  ? r.missingKeywords
+                                  : shown
+                                ).map((k) => (
+                                  <span
+                                    key={k}
+                                    className="rounded-sm border border-dashed border-slate-300 bg-white text-slate-600 text-[11px] px-1.5"
+                                  >
+                                    {k}
+                                  </span>
+                                ))}
+                                {extra > 0 && (
+                                  <button
+                                    onClick={() =>
+                                      setExpandedKws((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(r.candidate.id)) next.delete(r.candidate.id);
+                                        else next.add(r.candidate.id);
+                                        return next;
+                                      })
+                                    }
+                                    className="text-[11px] text-indigo-600 underline"
+                                  >
+                                    {expandedKws.has(r.candidate.id)
+                                      ? "show less"
+                                      : `+${extra} more`}
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -626,13 +797,19 @@ export default function Home() {
                   {kpModal.missingKeywords.map((k) => (
                     <span
                       key={k}
-                      className="rounded bg-slate-100 border border-slate-200 px-1.5 py-0.5 text-[10px] text-slate-700"
+                      className="rounded-sm border border-dashed border-slate-300 bg-white text-slate-600 text-[11px] px-1.5"
                     >
                       {k}
                     </span>
                   ))}
                 </div>
-                {badge(kpModal.severity)}
+                <p
+                  className={`text-[11px] font-medium ${
+                    SEVERITY_TEXT_CLS[OPTION_SEMANTIC[kpModal.severity] ?? "neutral"]
+                  }`}
+                >
+                  Jev severity: {humanise(kpModal.severity)}
+                </p>
                 <button
                   onClick={() => navigator.clipboard.writeText(kpModal.missingKeywords.join("\n"))}
                   className="mt-3 w-full rounded bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 px-2 py-1 text-xs"
