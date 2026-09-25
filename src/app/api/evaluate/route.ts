@@ -76,6 +76,7 @@ export async function POST(req: Request) {
       evaluatedCount: results.length,
       shortlist,
       concurrency,
+      cacheHits: evaluator.cacheHits,
     };
     if (evaluator.fallbackReason) response.fallbackReason = evaluator.fallbackReason;
     return Response.json(response);

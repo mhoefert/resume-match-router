@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  DISCIPLINE_ALIGNMENT,
-  DOMAIN_OVERLAP,
+  DOMAIN_FIT,
+  FUNCTION_FIT,
   KEYWORD_SEVERITY,
-  REUSE_RECOMMENDATION,
-  SENIORITY_DELTA,
+  MUST_HAVE_COVERAGE,
+  SENIORITY_FIT,
 } from "@/lib/jev/contract";
 
 /* ---------- shared types (mirror of src/lib/types.ts, client-safe) ---------- */
@@ -26,14 +26,16 @@ interface JdDetail extends JdSummary {
   wordCount: number;
 }
 interface Scorecard {
-  discipline_alignment: string;
-  seniority_delta: string;
-  domain_overlap: string;
+  function_fit: string;
+  seniority_fit: string;
+  domain_fit: string;
+  must_have_coverage: string;
   hard_requirement_blocker: boolean;
   reuse_recommendation: string;
   fit_confidence: number;
   keyword_severity: string;
   confidences: Partial<Record<string, number>>;
+  distributions?: Partial<Record<string, Record<string, number>>>;
   source: string;
 }
 interface MatchResult {
@@ -52,6 +54,7 @@ interface EvaluateResponse {
   evaluatedCount: number;
   shortlist: number;
   concurrency: number;
+  cacheHits?: number;
 }
 interface StatusResponse {
   vaultPath: string;
@@ -67,17 +70,22 @@ type Toast = { id: number; kind: "success" | "error"; text: string };
 type Semantic = "good" | "medium" | "bad" | "neutral";
 
 const OPTION_LABELS: Record<string, string> = {
-  exact_match: "Exact match",
-  adjacent_transferable: "Adjacent / transferable",
-  unrelated_mismatch: "Unrelated",
-  junior_to_jd: "Junior to JD",
-  at_level: "At level",
-  stretch_senior: "Stretch senior",
-  overqualified: "Overqualified",
-  direct_industry: "Direct industry",
-  adjacent_regulated: "Adjacent regulated",
-  generalist_only: "Generalist only",
-  distant_sector: "Distant sector",
+  unrelated: "Unrelated craft",
+  partial: "Partial overlap",
+  adjacent: "Adjacent craft",
+  match: "Craft matches",
+  far: "Scope far off",
+  stretch: "One band off",
+  near: "Same band",
+  aligned: "Level matches",
+  distant: "Distant sector",
+  generalist: "Generalist only",
+  analogous: "Analogous context",
+  direct: "Same context",
+  few: "Few must-haves",
+  some: "About half",
+  most: "Most evidenced",
+  complete: "All evidenced",
   reuse_as_is: "Reuse as-is",
   light_keyword_pass: "Light keyword pass",
   escalate_full_compile: "Escalate full compile",
@@ -90,17 +98,22 @@ const OPTION_LABELS: Record<string, string> = {
 };
 
 const OPTION_SEMANTIC: Record<string, Semantic> = {
-  exact_match: "good",
-  adjacent_transferable: "medium",
-  unrelated_mismatch: "bad",
-  junior_to_jd: "bad",
-  at_level: "good",
-  stretch_senior: "medium",
-  overqualified: "medium",
-  direct_industry: "good",
-  adjacent_regulated: "medium",
-  generalist_only: "medium",
-  distant_sector: "bad",
+  unrelated: "bad",
+  partial: "medium",
+  adjacent: "medium",
+  match: "good",
+  far: "bad",
+  stretch: "medium",
+  near: "medium",
+  aligned: "good",
+  distant: "bad",
+  generalist: "medium",
+  analogous: "medium",
+  direct: "good",
+  few: "bad",
+  some: "medium",
+  most: "medium",
+  complete: "good",
   reuse_as_is: "good",
   light_keyword_pass: "neutral",
   escalate_full_compile: "medium",
@@ -131,43 +144,60 @@ const DOT_FILL: Record<Semantic, string> = {
   neutral: "bg-sky-500",
 };
 
-function DotStrip({
+const BAR_TRACK = 48;
+
+function ProbBars({
   code,
   label,
   options,
   selected,
-  confidence,
+  distribution,
 }: {
   code: string;
   label: string;
   options: readonly string[];
   selected: string;
-  confidence?: number;
+  distribution?: Record<string, number>;
 }) {
-  const conf = confidence === undefined ? "--" : `${Math.round(confidence * 100)}%`;
+  const bars = options.map((opt) => ({
+    opt,
+    p: Math.min(1, Math.max(0, distribution?.[opt] ?? (opt === selected ? 1 : 0))),
+  }));
+  let winner = selected;
+  let best = -1;
+  for (const bar of bars) {
+    if (bar.p > best || (bar.p === best && bar.opt === selected)) {
+      best = bar.p;
+      winner = bar.opt;
+    }
+  }
+  const summary = bars.map((bar) => `${humanise(bar.opt)} ${Math.round(bar.p * 100)}%`).join(", ");
   return (
     <div
-      className="group relative flex items-center gap-1"
-      title={`${label}: ${humanise(selected)} (${conf}) - options: ${options.map(humanise).join(" \u00b7 ")}`}
+      className="group relative flex flex-col items-center gap-1"
+      title={`${label}: ${summary}`}
+      aria-label={`${label}. ${summary}`}
     >
-      <span className="text-[10px] uppercase text-slate-400">{code}</span>
-      <span className="flex items-center gap-[2px]">
-        {options.map((opt) => (
+      <span className="flex h-12 items-end gap-1 border-b border-slate-200 px-0.5">
+        {bars.map((bar) => (
           <span
-            key={opt}
-            className={`h-[7px] w-[7px] rounded-full ${
-              opt === selected ? DOT_FILL[OPTION_SEMANTIC[opt] ?? "neutral"] : "bg-slate-200"
+            key={bar.opt}
+            className={`w-1.5 rounded-t-[2px] ${
+              bar.opt === winner ? DOT_FILL[OPTION_SEMANTIC[bar.opt] ?? "neutral"] : "bg-slate-200"
             }`}
+            style={{ height: `${Math.max(bar.p > 0 ? 3 : 1, Math.round(bar.p * BAR_TRACK))}px` }}
           />
         ))}
       </span>
-      <div className="dot-popover absolute left-0 top-full mt-1 bg-slate-900 text-white text-[11px] rounded px-2 py-1 shadow-lg z-20 whitespace-nowrap">
-        <div className="font-semibold mb-0.5">{label}</div>
-        {options.map((opt) => (
-          <div key={opt} className={opt === selected ? "font-bold" : "text-slate-300"}>
-            {opt === selected ? "\u2713 " : ""}
-            {humanise(opt)}
-            {opt === selected ? ` \u00b7 ${conf}` : ""}
+      <span className="text-[9px] font-medium uppercase tracking-wide text-slate-400 leading-none">
+        {code}
+      </span>
+      <div className="dot-popover absolute left-1/2 top-full z-20 mt-1 -translate-x-1/2 whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-[11px] text-white shadow-lg">
+        <div className="mb-0.5 font-semibold">{label}</div>
+        {bars.map((bar) => (
+          <div key={bar.opt} className={bar.opt === winner ? "font-bold" : "text-slate-300"}>
+            {bar.opt === winner ? "\u2713 " : ""}
+            {humanise(bar.opt)} · {Math.round(bar.p * 100)}%
           </div>
         ))}
       </div>
@@ -615,7 +645,7 @@ export default function Home() {
               {evaluating && (
                 <div className="space-y-2">
                   {[...Array(4)].map((_, i) => (
-                    <div key={i} className="h-24 rounded-lg bg-slate-200 animate-pulse border border-slate-200" />
+                    <div key={i} className="h-16 rounded-lg bg-slate-200 animate-pulse border border-slate-200" />
                   ))}
                 </div>
               )}
@@ -626,11 +656,14 @@ export default function Home() {
                       Evaluated {evalResp.evaluatedCount} of {evalResp.corpusSize} resumes in{" "}
                       {evalResp.durationMs} ms · mode: {evalResp.mode} · concurrency{" "}
                       {evalResp.concurrency}
+                      {typeof evalResp.cacheHits === "number"
+                        ? ` · ${evalResp.cacheHits} from cache`
+                        : ""}
                       {evalResp.fallbackReason ? ` (fallback: ${evalResp.fallbackReason})` : ""}
                     </p>
                     <p className="text-[10px] text-slate-400">
-                      DI discipline · SE seniority · DO domain · RE recommendation · KW keyword gap
-                      · BL hard blocker - hover a strip for details
+                      FN function · SE seniority · DO domain · MH must-haves · KW keyword gap
+                      · BL hard blocker — bar height is that answer&apos;s probability; colour marks the most likely
                     </p>
                   </div>
                   <div className="space-y-2">
@@ -643,7 +676,7 @@ export default function Home() {
                             : "border-slate-200"
                         }`}
                       >
-                        <div className="flex items-center gap-3 py-2 px-3">
+                        <div className="flex items-center gap-3 py-3 px-3">
                           <span className="text-slate-400 text-xs w-6">#{i + 1}</span>
                           <div className="w-14 shrink-0">
                             <span className="text-xl font-bold">
@@ -662,50 +695,48 @@ export default function Home() {
                               {" "}· {r.candidate.folder}
                             </span>
                           </div>
-                          <div className="shrink-0 flex items-center gap-3">
-                            <DotStrip
-                              code="DI"
-                              label="Discipline"
-                              options={DISCIPLINE_ALIGNMENT}
-                              selected={r.scorecard.discipline_alignment}
-                              confidence={r.scorecard.confidences?.discipline_alignment}
+                          <div className="shrink-0 flex items-end gap-2.5">
+                            <ProbBars
+                              code="FN"
+                              label="Function"
+                              options={FUNCTION_FIT}
+                              selected={r.scorecard.function_fit}
+                              distribution={r.scorecard.distributions?.function_fit}
                             />
-                            <DotStrip
+                            <ProbBars
                               code="SE"
                               label="Seniority"
-                              options={SENIORITY_DELTA}
-                              selected={r.scorecard.seniority_delta}
-                              confidence={r.scorecard.confidences?.seniority_delta}
+                              options={SENIORITY_FIT}
+                              selected={r.scorecard.seniority_fit}
+                              distribution={r.scorecard.distributions?.seniority_fit}
                             />
-                            <DotStrip
+                            <ProbBars
                               code="DO"
                               label="Domain"
-                              options={DOMAIN_OVERLAP}
-                              selected={r.scorecard.domain_overlap}
-                              confidence={r.scorecard.confidences?.domain_overlap}
+                              options={DOMAIN_FIT}
+                              selected={r.scorecard.domain_fit}
+                              distribution={r.scorecard.distributions?.domain_fit}
                             />
-                            <DotStrip
-                              code="RE"
-                              label="Recommendation"
-                              options={REUSE_RECOMMENDATION}
-                              selected={r.scorecard.reuse_recommendation}
-                              confidence={r.scorecard.confidences?.reuse_recommendation}
+                            <ProbBars
+                              code="MH"
+                              label="Must-haves"
+                              options={MUST_HAVE_COVERAGE}
+                              selected={r.scorecard.must_have_coverage}
+                              distribution={r.scorecard.distributions?.must_have_coverage}
                             />
-                            <DotStrip
+                            <ProbBars
                               code="KW"
                               label="Keyword gap"
                               options={KEYWORD_SEVERITY}
                               selected={r.scorecard.keyword_severity}
-                              confidence={r.scorecard.confidences?.keyword_severity}
+                              distribution={r.scorecard.distributions?.keyword_severity}
                             />
-                            <DotStrip
+                            <ProbBars
                               code="BL"
                               label="Hard blocker"
                               options={["none", "blocker"]}
-                              selected={
-                                r.scorecard.hard_requirement_blocker ? "blocker" : "none"
-                              }
-                              confidence={r.scorecard.confidences?.hard_requirement_blocker}
+                              selected={r.scorecard.hard_requirement_blocker ? "blocker" : "none"}
+                              distribution={r.scorecard.distributions?.hard_requirement_blocker}
                             />
                           </div>
                           <div className="shrink-0 flex items-center gap-1">

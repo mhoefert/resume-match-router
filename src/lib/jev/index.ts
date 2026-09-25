@@ -1,10 +1,18 @@
+import { evaluationCacheKey, readCachedScorecard, writeCachedScorecard } from "./cache";
 import { evaluateCandidate, JevAuthError, type EvaluateOpts } from "./client";
 import { evaluateCandidateMock, mockLatency, type MockContext } from "./mock";
-import type { EvaluationState, Scorecard } from "./contract";
+import {
+  FIT_QUESTIONS,
+  KEYWORD_SEVERITY_QUESTION,
+  type EvaluationState,
+  type Scorecard,
+} from "./contract";
 
 export interface Evaluator {
   mode: "jev" | "mock";
   fallbackReason?: string;
+  /** Scorecards reused from the local file cache during this batch. */
+  cacheHits: number;
   evaluate(
     jdId: string,
     candidateId: string,
@@ -25,6 +33,7 @@ export function getEvaluator(): Evaluator {
   if (!apiKey) {
     return {
       mode: "mock",
+      cacheHits: 0,
       evaluate: async (jdId, candidateId, state, ctx) => {
         await mockLatency();
         return evaluateCandidateMock(jdId, candidateId, state, ctx);
@@ -36,6 +45,7 @@ export function getEvaluator(): Evaluator {
   let fellBack = false;
   let fallbackReason: string | undefined;
   let firstCall = true;
+  let cacheHits = 0;
 
   const evaluator: Evaluator = {
     get mode() {
@@ -44,14 +54,28 @@ export function getEvaluator(): Evaluator {
     get fallbackReason() {
       return fallbackReason;
     },
+    get cacheHits() {
+      return cacheHits;
+    },
     async evaluate(jdId, candidateId, state, ctx) {
       if (fellBack) {
         await mockLatency();
         return evaluateCandidateMock(jdId, candidateId, state, ctx);
       }
+      const questions = {
+        fit: FIT_QUESTIONS,
+        keyword: state.missing_keywords.length > 0 ? KEYWORD_SEVERITY_QUESTION : null,
+      };
+      const key = evaluationCacheKey(model, state, questions);
+      const cached = readCachedScorecard(key);
+      if (cached) {
+        cacheHits++;
+        return cached;
+      }
       try {
         const result = await evaluateCandidate(state, opts);
         firstCall = false;
+        writeCachedScorecard(key, result);
         return result;
       } catch (err) {
         if (err instanceof JevAuthError && firstCall) {

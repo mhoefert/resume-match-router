@@ -45,4 +45,6 @@ export interface EvaluateResponse {
   /** Effective number of candidates sent to the evaluator. */
   shortlist: number;
   concurrency: number;
+  /** How many scorecards in this run were read from the local cache. */
+  cacheHits: number;
 }

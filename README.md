@@ -12,10 +12,11 @@ route each JD to one of three outcomes: **Reuse As-Is**, **Keyword Pass**, or
   cross-discipline lexicon plus proper-noun/acronym heuristics extracts JD
   keywords; `prerankScore` ranks the whole corpus deterministically and only the
   top `JEV_SHORTLIST` candidates are sent to the evaluator.
-- **Jev contract** (`src/lib/jev/contract.ts`): verbatim copy of the TypeSafe
-  System One evaluation contract. `src/lib/jev/client.ts` POSTs the
-  `EvaluationState` plus typed questions to `https://api.typesafe.ai/v1/systemone`
-  and validates the returned choice/score/noul answers.
+- **Jev contract** (`src/lib/jev/contract.ts`): four single-dimension Scores
+  (function, seniority, domain, must-haves) plus a hard-blocker yes/no, sent
+  without the missing-keyword list. The /100 is a weighted sum of those scores
+  in code. Keyword severity is a second request that includes the missing terms.
+  `src/lib/jev/client.ts` POSTs to `https://api.typesafe.ai/v1/systemone`.
 - **Mock fallback** (`src/lib/jev/index.ts`, `mock.ts`): when
   `TYPESAFE_API_KEY` is empty the deterministic mock evaluator produces seeded
   scorecards (same JD+candidate always scores the same). If a real key returns
